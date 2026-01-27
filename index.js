@@ -6,7 +6,6 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 const extensionName = 'ST-SwipeCleaner';
 const extensionWebPath = `/scripts/extensions/third-party/${extensionName}`;
 const settingsKey = 'st_swipe_cleaner';
-const legacySettingsKey = 'swipe_pruner_plugin';
 
 const DEFAULT_SETTINGS = Object.freeze({
     keepFloors: 20,
@@ -403,7 +402,7 @@ function ensureButtons(context, settings) {
     });
 }
 
-async function runKeepCurrent(context, settings, { saveOverride } = {}) {
+async function runKeepCurrent(context, settings) {
     if (isRunning) return;
     isRunning = true;
     try {
@@ -427,11 +426,10 @@ async function runKeepCurrent(context, settings, { saveOverride } = {}) {
         safeSwipeRefresh(context);
         await emitMessageRendered(context, messageId, message);
 
-        const nextSettings = { ...settings, autoSave: resolveAutoSave(settings, saveOverride) };
-        const saveResult = await maybeSave(context, nextSettings);
+        const saveResult = await maybeSave(context, settings);
         if (saveResult.saved) {
             toastr.success('已清理并保存。');
-        } else if (nextSettings.autoSave && saveResult.error) {
+        } else if (settings.autoSave && saveResult.error) {
             toastr.warning('已清理，但保存失败（未保存）。');
         } else {
             toastr.success('已清理（未保存）。');
@@ -445,7 +443,7 @@ async function runKeepCurrent(context, settings, { saveOverride } = {}) {
     }
 }
 
-async function runDeleteSpecified(context, settings, { spec, saveOverride } = {}) {
+async function runDeleteSpecified(context, settings, { spec } = {}) {
     if (isRunning) return;
     isRunning = true;
     try {
@@ -486,11 +484,10 @@ async function runDeleteSpecified(context, settings, { spec, saveOverride } = {}
         safeSwipeRefresh(context);
         await emitMessageRendered(context, messageId, message);
 
-        const nextSettings = { ...settings, autoSave: resolveAutoSave(settings, saveOverride) };
-        const saveResult = await maybeSave(context, nextSettings);
+        const saveResult = await maybeSave(context, settings);
         if (saveResult.saved) {
             toastr.success('已删除并保存。');
-        } else if (nextSettings.autoSave && saveResult.error) {
+        } else if (settings.autoSave && saveResult.error) {
             toastr.warning('已删除，但保存失败（未保存）。');
         } else {
             toastr.success('已删除（未保存）。');
@@ -504,14 +501,13 @@ async function runDeleteSpecified(context, settings, { spec, saveOverride } = {}
     }
 }
 
-async function runPruneOld(context, settings, { keepFloors, includeHidden, saveOverride } = {}) {
+async function runPruneOld(context, settings, { keepFloors } = {}) {
     if (isRunning) return;
     isRunning = true;
     try {
         const { chat } = context;
         const keep = keepFloors !== undefined ? clampInt(keepFloors, 0, chat.length) : settings.keepFloors;
-        const hidden = includeHidden !== undefined ? Boolean(includeHidden) : settings.includeHidden;
-        const result = pruneOldSwipes(chat, keep, hidden);
+        const result = pruneOldSwipes(chat, keep, settings.includeHidden);
         if (!result.changed) {
             toastr.info(`没有需要清理的旧 swipe（保留最近 ${keep} 层）。`);
             return { changed: false };
@@ -524,11 +520,10 @@ async function runPruneOld(context, settings, { keepFloors, includeHidden, saveO
         safeSwipeRefresh(context);
         await Promise.all(result.affectedMessageIds.map(id => emitMessageRendered(context, id, chat[id])));
 
-        const nextSettings = { ...settings, autoSave: resolveAutoSave(settings, saveOverride) };
-        const saveResult = await maybeSave(context, nextSettings);
+        const saveResult = await maybeSave(context, settings);
         if (saveResult.saved) {
             toastr.success(`已清理 ${result.affectedMessages} 层（删除 ${result.removedSwipes} 条），并已保存。`);
-        } else if (nextSettings.autoSave && saveResult.error) {
+        } else if (settings.autoSave && saveResult.error) {
             toastr.warning(`已清理 ${result.affectedMessages} 层（删除 ${result.removedSwipes} 条），但保存失败（未保存）。`);
         } else {
             toastr.success(`已清理 ${result.affectedMessages} 层（删除 ${result.removedSwipes} 条），未保存。`);
@@ -542,27 +537,6 @@ async function runPruneOld(context, settings, { keepFloors, includeHidden, saveO
     }
 }
 
-function resolveAutoSave(settings, override) {
-    if (override === undefined || override === null || override === '') return settings.autoSave;
-    if (typeof override === 'string') {
-        const normalized = override.trim().toLowerCase();
-        if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
-        if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
-    }
-    return Boolean(override);
-}
-
-function normalizeBooleanArg(value) {
-    if (value === undefined || value === null || value === '') return undefined;
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'string') {
-        const normalized = value.trim().toLowerCase();
-        if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
-        if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
-    }
-    return Boolean(value);
-}
-
 function registerSlashCommands(context, settings) {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'swipecleaner',
@@ -574,10 +548,6 @@ function registerSlashCommands(context, settings) {
             new SlashCommandArgument('swipe 序号（例如 1-3 或 1,3,5）', ARGUMENT_TYPE.STRING, false, false),
         ],
         callback: async (args, value) => {
-            if (args?.hidden !== undefined || args?.save !== undefined) {
-                throw new Error('不支持 hidden/save 参数。');
-            }
-
             const keepRaw = args?.keep !== undefined ? Number(args.keep) : undefined;
             const keep = Number.isFinite(keepRaw) ? Math.trunc(keepRaw) : undefined;
             const spec = value !== undefined && value !== null ? String(value).trim() : '';
@@ -605,15 +575,10 @@ function registerSlashCommands(context, settings) {
 function ensureSettings(context) {
     const extSettings = context.extensionSettings;
     if (!extSettings[settingsKey]) {
-        if (extSettings[legacySettingsKey]) {
-            extSettings[settingsKey] = extSettings[legacySettingsKey];
-            delete extSettings[legacySettingsKey];
-        } else {
-            extSettings[settingsKey] = {
-                ...DEFAULT_SETTINGS,
-                buttonVisibility: { ...DEFAULT_SETTINGS.buttonVisibility },
-            };
-        }
+        extSettings[settingsKey] = {
+            ...DEFAULT_SETTINGS,
+            buttonVisibility: { ...DEFAULT_SETTINGS.buttonVisibility },
+        };
         context.saveSettingsDebounced();
     }
     const current = extSettings[settingsKey];
