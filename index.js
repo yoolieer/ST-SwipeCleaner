@@ -1,12 +1,16 @@
 import { getContext } from '../../../extensions.js';
+import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
+import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
+import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../../slash-commands/SlashCommandArgument.js';
 
 const extensionName = 'ST-SwipeCleaner';
 const extensionWebPath = `/scripts/extensions/third-party/${extensionName}`;
-const settingsKey = 'swipe_pruner_plugin';
+const settingsKey = 'st_swipe_cleaner';
+const legacySettingsKey = 'swipe_pruner_plugin';
 
 const DEFAULT_SETTINGS = Object.freeze({
     keepFloors: 20,
-    autoSave: false,
+    autoSave: true,
     includeHidden: true,
     buttonsEnabled: true,
     buttonVisibility: Object.freeze({
@@ -212,7 +216,7 @@ function deleteSpecifiedSwipes(message, deleteSet) {
         if (!deleteSet.has(i)) toKeep.push(i);
     }
     if (toKeep.length === 0) {
-        throw new Error('不能删除最后一条 swipe。');
+        throw new Error('至少保留一条 swipe。');
     }
 
     let selectedOriginalIndex;
@@ -322,7 +326,7 @@ function ensureButtons(context, settings) {
     const hasAnyEnabled = Object.values(visibility).some(Boolean);
 
     if (!hasAnyEnabled) {
-        $('#swipe_pruner_plugin_bar').remove();
+        $('#st_swipe_cleaner_bar').remove();
         return;
     }
 
@@ -347,15 +351,15 @@ function ensureButtons(context, settings) {
     };
 
     const ensureBar = () => {
-        let $bar = $('#swipe_pruner_plugin_bar');
+        let $bar = $('#st_swipe_cleaner_bar');
         const $qrHost = resolveQrHost();
 
         if (!$bar.length) {
-            $bar = $('<div id="swipe_pruner_plugin_bar" class="qr--buttons swipe-pruner-plugin-set"></div>');
+            $bar = $('<div id="st_swipe_cleaner_bar" class="qr--buttons st-swipe-cleaner-set"></div>');
         }
 
         const inQr = Boolean($qrHost && $qrHost.length);
-        $bar.toggleClass('swipe-pruner-plugin-fallback', !inQr);
+        $bar.toggleClass('st-swipe-cleaner-fallback', !inQr);
 
         const $desiredHost = inQr ? $qrHost : $sendForm;
         if ($bar.parent()[0] !== $desiredHost[0]) {
@@ -386,175 +390,265 @@ function ensureButtons(context, settings) {
         $bar.append($btn);
     };
 
-    ensureButton('swipe_pruner_plugin_btn_keep', BUTTON_KEEP_CURRENT, '清理当前楼层其它 swipes（保留当前）', visibility.keepCurrent, async () => {
-        if (isRunning) return;
-        isRunning = true;
-        try {
-            const { chat } = context;
-            const messageId = findTargetMessageId(chat);
-            if (messageId === null) {
-                toastr.warning('找不到可处理的 AI 楼层。');
-                return;
-            }
-            const message = chat[messageId];
-            const result = keepOnlyCurrentSwipe(message, { quiet: true });
-            if (!result.changed) {
-                toastr.info('当前楼层没有其它 swipe，无需清理。');
-                return;
-            }
-
-            markChatTainted(context);
-            updateSwipeCounterOnly(messageId, message);
-            updateTimestampUi(messageId, message);
-            context.updateMessageBlock(messageId, message);
-            safeSwipeRefresh(context);
-            await emitMessageRendered(context, messageId, message);
-
-            const saveResult = await maybeSave(context, settings);
-            if (saveResult.saved) {
-                toastr.success('已清理并保存。');
-            } else if (settings.autoSave && saveResult.error) {
-                toastr.warning('已清理，但保存失败（未保存）。');
-            } else {
-                toastr.success('已清理（未保存）。');
-            }
-        } catch (err) {
-            toastr.error(String(err?.message ?? err), '清理失败');
-        } finally {
-            isRunning = false;
-        }
+    ensureButton('st_swipe_cleaner_btn_keep', BUTTON_KEEP_CURRENT, '清理当前楼层其它 swipes（保留当前）', visibility.keepCurrent, async () => {
+        await runKeepCurrent(context, settings);
     });
 
-    ensureButton('swipe_pruner_plugin_btn_delete', BUTTON_DELETE_SPECIFIED, '删除当前楼层指定 swipes', visibility.deleteSpecified, async () => {
-        if (isRunning) return;
-        isRunning = true;
-        try {
-            const { chat } = context;
-            const messageId = findTargetMessageId(chat);
-            if (messageId === null) {
-                toastr.warning('找不到可处理的 AI 楼层。');
-                return;
-            }
-            const message = chat[messageId];
-            const { swipes, swipeId } = normalizeSwipeState(message);
-            if (swipes.length <= 1) {
-                toastr.info('当前楼层没有可删除的 swipe。');
-                return;
-            }
+    ensureButton('st_swipe_cleaner_btn_delete', BUTTON_DELETE_SPECIFIED, '删除当前楼层指定 swipes', visibility.deleteSpecified, async () => {
+        await runDeleteSpecified(context, settings);
+    });
 
+    ensureButton('st_swipe_cleaner_btn_prune', BUTTON_PRUNE_OLD, '清理旧楼层无用 swipes（保留最近 N 层完整历史）', visibility.pruneOld, async () => {
+        await runPruneOld(context, settings);
+    });
+}
+
+async function runKeepCurrent(context, settings, { saveOverride } = {}) {
+    if (isRunning) return;
+    isRunning = true;
+    try {
+        const { chat } = context;
+        const messageId = findTargetMessageId(chat);
+        if (messageId === null) {
+            toastr.warning('找不到可处理的 AI 楼层。');
+            return { changed: false };
+        }
+        const message = chat[messageId];
+        const result = keepOnlyCurrentSwipe(message, { quiet: true });
+        if (!result.changed) {
+            toastr.info('当前楼层没有其它 swipe，无需清理。');
+            return { changed: false };
+        }
+
+        markChatTainted(context);
+        updateSwipeCounterOnly(messageId, message);
+        updateTimestampUi(messageId, message);
+        context.updateMessageBlock(messageId, message);
+        safeSwipeRefresh(context);
+        await emitMessageRendered(context, messageId, message);
+
+        const nextSettings = { ...settings, autoSave: resolveAutoSave(settings, saveOverride) };
+        const saveResult = await maybeSave(context, nextSettings);
+        if (saveResult.saved) {
+            toastr.success('已清理并保存。');
+        } else if (nextSettings.autoSave && saveResult.error) {
+            toastr.warning('已清理，但保存失败（未保存）。');
+        } else {
+            toastr.success('已清理（未保存）。');
+        }
+        return { changed: true };
+    } catch (err) {
+        toastr.error(String(err?.message ?? err), '清理失败');
+        return { changed: false, error: err };
+    } finally {
+        isRunning = false;
+    }
+}
+
+async function runDeleteSpecified(context, settings, { spec, saveOverride } = {}) {
+    if (isRunning) return;
+    isRunning = true;
+    try {
+        const { chat } = context;
+        const messageId = findTargetMessageId(chat);
+        if (messageId === null) {
+            toastr.warning('找不到可处理的 AI 楼层。');
+            return { changed: false };
+        }
+        const message = chat[messageId];
+        const { swipes, swipeId } = normalizeSwipeState(message);
+        if (swipes.length <= 1) {
+            toastr.info('当前楼层没有可删除的 swipe。');
+            return { changed: false };
+        }
+
+        let inputSpec = spec;
+        if (!inputSpec) {
             const current = swipeId + 1;
-            const spec = prompt(
+            inputSpec = prompt(
                 `请输入要删除的 swipe 序号（1-${swipes.length}），支持 x-y 或 x,y,z\n\n` +
                 `当前选中：${current}\n` +
                 `示例：2-4 或 1,3,5`,
             );
-            if (spec === null) return;
-
-            const deleteSet = parseSwipeSpec(spec, swipes.length);
-            if (deleteSet.size === 0) return;
-
-            const result = deleteSpecifiedSwipes(message, deleteSet);
-            if (!result.changed) return;
-
-            markChatTainted(context);
-            updateSwipeCounterOnly(messageId, message);
-            updateTimestampUi(messageId, message);
-            context.updateMessageBlock(messageId, message);
-            safeSwipeRefresh(context);
-            await emitMessageRendered(context, messageId, message);
-
-            const saveResult = await maybeSave(context, settings);
-            if (saveResult.saved) {
-                toastr.success('已删除并保存。');
-            } else if (settings.autoSave && saveResult.error) {
-                toastr.warning('已删除，但保存失败（未保存）。');
-            } else {
-                toastr.success('已删除（未保存）。');
-            }
-        } catch (err) {
-            toastr.error(String(err?.message ?? err), '删除失败');
-        } finally {
-            isRunning = false;
+            if (inputSpec === null) return { changed: false };
         }
-    });
 
-    ensureButton('swipe_pruner_plugin_btn_prune', BUTTON_PRUNE_OLD, '清理旧楼层无用 swipes（保留最近 N 层完整历史）', visibility.pruneOld, async () => {
-        if (isRunning) return;
-        isRunning = true;
-        try {
-            const { chat } = context;
-            const result = pruneOldSwipes(chat, settings.keepFloors, settings.includeHidden);
-            if (!result.changed) {
-                toastr.info(`没有需要清理的旧 swipe（保留最近 ${settings.keepFloors} 层）。`);
-                return;
-            }
+        const deleteSet = parseSwipeSpec(inputSpec, swipes.length);
+        if (deleteSet.size === 0) return { changed: false };
 
-            markChatTainted(context);
-            result.affectedMessageIds.forEach(id => {
-                updateSwipeCounterOnly(id, chat[id]);
-            });
-            safeSwipeRefresh(context);
-            await Promise.all(result.affectedMessageIds.map(id => emitMessageRendered(context, id, chat[id])));
+        const result = deleteSpecifiedSwipes(message, deleteSet);
+        if (!result.changed) return { changed: false };
 
-            const saveResult = await maybeSave(context, settings);
-            if (saveResult.saved) {
-                toastr.success(`已清理 ${result.affectedMessages} 层（删除 ${result.removedSwipes} 条），并已保存。`);
-            } else if (settings.autoSave && saveResult.error) {
-                toastr.warning(`已清理 ${result.affectedMessages} 层（删除 ${result.removedSwipes} 条），但保存失败（未保存）。`);
-            } else {
-                toastr.success(`已清理 ${result.affectedMessages} 层（删除 ${result.removedSwipes} 条），未保存。`);
-            }
-        } catch (err) {
-            toastr.error(String(err?.message ?? err), '清理失败');
-        } finally {
-            isRunning = false;
+        markChatTainted(context);
+        updateSwipeCounterOnly(messageId, message);
+        updateTimestampUi(messageId, message);
+        context.updateMessageBlock(messageId, message);
+        safeSwipeRefresh(context);
+        await emitMessageRendered(context, messageId, message);
+
+        const nextSettings = { ...settings, autoSave: resolveAutoSave(settings, saveOverride) };
+        const saveResult = await maybeSave(context, nextSettings);
+        if (saveResult.saved) {
+            toastr.success('已删除并保存。');
+        } else if (nextSettings.autoSave && saveResult.error) {
+            toastr.warning('已删除，但保存失败（未保存）。');
+        } else {
+            toastr.success('已删除（未保存）。');
         }
-    });
+        return { changed: true };
+    } catch (err) {
+        toastr.error(String(err?.message ?? err), '删除失败');
+        return { changed: false, error: err };
+    } finally {
+        isRunning = false;
+    }
+}
+
+async function runPruneOld(context, settings, { keepFloors, includeHidden, saveOverride } = {}) {
+    if (isRunning) return;
+    isRunning = true;
+    try {
+        const { chat } = context;
+        const keep = keepFloors !== undefined ? clampInt(keepFloors, 0, chat.length) : settings.keepFloors;
+        const hidden = includeHidden !== undefined ? Boolean(includeHidden) : settings.includeHidden;
+        const result = pruneOldSwipes(chat, keep, hidden);
+        if (!result.changed) {
+            toastr.info(`没有需要清理的旧 swipe（保留最近 ${keep} 层）。`);
+            return { changed: false };
+        }
+
+        markChatTainted(context);
+        result.affectedMessageIds.forEach(id => {
+            updateSwipeCounterOnly(id, chat[id]);
+        });
+        safeSwipeRefresh(context);
+        await Promise.all(result.affectedMessageIds.map(id => emitMessageRendered(context, id, chat[id])));
+
+        const nextSettings = { ...settings, autoSave: resolveAutoSave(settings, saveOverride) };
+        const saveResult = await maybeSave(context, nextSettings);
+        if (saveResult.saved) {
+            toastr.success(`已清理 ${result.affectedMessages} 层（删除 ${result.removedSwipes} 条），并已保存。`);
+        } else if (nextSettings.autoSave && saveResult.error) {
+            toastr.warning(`已清理 ${result.affectedMessages} 层（删除 ${result.removedSwipes} 条），但保存失败（未保存）。`);
+        } else {
+            toastr.success(`已清理 ${result.affectedMessages} 层（删除 ${result.removedSwipes} 条），未保存。`);
+        }
+        return { changed: true };
+    } catch (err) {
+        toastr.error(String(err?.message ?? err), '清理失败');
+        return { changed: false, error: err };
+    } finally {
+        isRunning = false;
+    }
+}
+
+function resolveAutoSave(settings, override) {
+    if (override === undefined || override === null || override === '') return settings.autoSave;
+    if (typeof override === 'string') {
+        const normalized = override.trim().toLowerCase();
+        if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+    }
+    return Boolean(override);
+}
+
+function normalizeBooleanArg(value) {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+    }
+    return Boolean(value);
+}
+
+function registerSlashCommands(context, settings) {
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'swipecleaner',
+        helpString: '清理 swipe：/swipecleaner | /swipecleaner 1-3 | /swipecleaner 1,3 | /swipecleaner keep=20',
+        namedArgumentList: [
+            new SlashCommandNamedArgument('keep', '保留最近楼层数（清理旧楼层 swipes）', ARGUMENT_TYPE.NUMBER, false, false),
+        ],
+        unnamedArgumentList: [
+            new SlashCommandArgument('swipe 序号（例如 1-3 或 1,3,5）', ARGUMENT_TYPE.STRING, false, false),
+        ],
+        callback: async (args, value) => {
+            if (args?.hidden !== undefined || args?.save !== undefined) {
+                throw new Error('不支持 hidden/save 参数。');
+            }
+
+            const keepRaw = args?.keep !== undefined ? Number(args.keep) : undefined;
+            const keep = Number.isFinite(keepRaw) ? Math.trunc(keepRaw) : undefined;
+            const spec = value !== undefined && value !== null ? String(value).trim() : '';
+
+            if (keep !== undefined && spec) {
+                throw new Error('请只使用一种方式：keep= 或 swipe 序号。');
+            }
+
+            if (keep !== undefined) {
+                await runPruneOld(context, settings, { keepFloors: keep });
+                return 'ok';
+            }
+
+            if (spec) {
+                await runDeleteSpecified(context, settings, { spec });
+                return 'ok';
+            }
+
+            await runKeepCurrent(context, settings);
+            return 'ok';
+        },
+    }));
 }
 
 function ensureSettings(context) {
     const extSettings = context.extensionSettings;
     if (!extSettings[settingsKey]) {
-        extSettings[settingsKey] = {
-            ...DEFAULT_SETTINGS,
-            buttonVisibility: { ...DEFAULT_SETTINGS.buttonVisibility },
-        };
+        if (extSettings[legacySettingsKey]) {
+            extSettings[settingsKey] = extSettings[legacySettingsKey];
+            delete extSettings[legacySettingsKey];
+        } else {
+            extSettings[settingsKey] = {
+                ...DEFAULT_SETTINGS,
+                buttonVisibility: { ...DEFAULT_SETTINGS.buttonVisibility },
+            };
+        }
         context.saveSettingsDebounced();
+    }
+    const current = extSettings[settingsKey];
+    let changed = false;
+    for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+        if (current[key] === undefined) {
+            current[key] = value;
+            changed = true;
+        }
+    }
+    if (!current.buttonVisibility || typeof current.buttonVisibility !== 'object') {
+        current.buttonVisibility = { ...DEFAULT_SETTINGS.buttonVisibility };
+        changed = true;
     } else {
-        const current = extSettings[settingsKey];
-        let changed = false;
-        for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
-            if (current[key] === undefined) {
-                current[key] = value;
+        for (const [key, value] of Object.entries(DEFAULT_SETTINGS.buttonVisibility)) {
+            if (current.buttonVisibility[key] === undefined) {
+                current.buttonVisibility[key] = value;
                 changed = true;
             }
         }
-        if (!current.buttonVisibility || typeof current.buttonVisibility !== 'object') {
-            current.buttonVisibility = { ...DEFAULT_SETTINGS.buttonVisibility };
-            changed = true;
-        } else {
-            for (const [key, value] of Object.entries(DEFAULT_SETTINGS.buttonVisibility)) {
-                if (current.buttonVisibility[key] === undefined) {
-                    current.buttonVisibility[key] = value;
-                    changed = true;
-                }
-            }
-        }
-        if (changed) {
-            context.saveSettingsDebounced();
-        }
+    }
+    if (changed) {
+        context.saveSettingsDebounced();
     }
     return extSettings[settingsKey];
 }
 
 function wireSettingsUi(context, settings) {
-    const $keepFloors = $('#swipe_pruner_plugin_keep_floors');
-    const $autoSave = $('#swipe_pruner_plugin_auto_save');
-    const $includeHidden = $('#swipe_pruner_plugin_include_hidden');
-    const $btnKeep = $('#swipe_pruner_plugin_btn_keep_enabled');
-    const $btnDelete = $('#swipe_pruner_plugin_btn_delete_enabled');
-    const $btnPrune = $('#swipe_pruner_plugin_btn_prune_enabled');
-    const $defaults = $('#swipe_pruner_plugin_apply_defaults');
+    const $keepFloors = $('#st_swipe_cleaner_keep_floors');
+    const $autoSave = $('#st_swipe_cleaner_auto_save');
+    const $includeHidden = $('#st_swipe_cleaner_include_hidden');
+    const $btnKeep = $('#st_swipe_cleaner_btn_keep_enabled');
+    const $btnDelete = $('#st_swipe_cleaner_btn_delete_enabled');
+    const $btnPrune = $('#st_swipe_cleaner_btn_prune_enabled');
+    const $defaults = $('#st_swipe_cleaner_apply_defaults');
 
     $keepFloors.val(String(settings.keepFloors));
     $autoSave.prop('checked', Boolean(settings.autoSave));
@@ -589,9 +683,9 @@ function wireSettingsUi(context, settings) {
     $btnPrune.on('change', syncButtonVisibility);
 
     const ensureTooltip = () => {
-        let $tooltip = $('#swipe_pruner_tooltip');
+        let $tooltip = $('#st_swipe_cleaner_tooltip');
         if ($tooltip.length) return $tooltip;
-        $tooltip = $('<div id="swipe_pruner_tooltip" class="swipe-pruner-tooltip"></div>').hide();
+        $tooltip = $('<div id="st_swipe_cleaner_tooltip" class="st-swipe-cleaner-tooltip"></div>').hide();
         $('body').append($tooltip);
         return $tooltip;
     };
@@ -611,7 +705,7 @@ function wireSettingsUi(context, settings) {
         $tooltip.css({ left: `${x}px`, top: `${y}px` });
     };
 
-    $('.swipe-pruner-option[data-info]').each(function () {
+    $('.st-swipe-cleaner-option[data-info]').each(function () {
         const $item = $(this);
         const key = $item.data('info');
         const text = BUTTON_INFO?.[key];
@@ -625,13 +719,13 @@ function wireSettingsUi(context, settings) {
                 positionTooltip($tooltip, evt);
             })
             .on('mousemove.swipePrunerTooltip', (evt) => {
-                const $tooltip = $('#swipe_pruner_tooltip');
+                const $tooltip = $('#st_swipe_cleaner_tooltip');
                 if ($tooltip.length && $tooltip.is(':visible')) {
                     positionTooltip($tooltip, evt);
                 }
             })
             .on('mouseleave.swipePrunerTooltip', () => {
-                $('#swipe_pruner_tooltip').hide();
+                $('#st_swipe_cleaner_tooltip').hide();
             });
     });
     $defaults.on('click', () => {
@@ -663,6 +757,9 @@ jQuery(async () => {
     const $settingsRoot = $('#extensions_settings2').length ? $('#extensions_settings2') : $('#extensions_settings');
     $settingsRoot.append(settingsHtml);
     wireSettingsUi(context, settings);
+
+    // Slash command
+    registerSlashCommands(context, settings);
 
     // Buttons
     ensureButtons(context, settings);

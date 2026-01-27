@@ -1,11 +1,11 @@
-.swipe-pruner-plugin-fallback {
+.st-swipe-cleaner-fallback {
     display: flex;
     gap: 5px;
     flex-wrap: wrap;
     margin: 4px 0;
 }
 
-.swipe-pruner-plugin-fallback .qr--button {
+.st-swipe-cleaner-fallback .qr--button {
     color: var(--SmartThemeBodyColor);
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 10px;
@@ -20,11 +20,11 @@
     position: relative;
 }
 
-.swipe-pruner-plugin-fallback .qr--button:hover {
+.st-swipe-cleaner-fallback .qr--button:hover {
     background-color: #4d4d4d;
 }
 
-.swipe-pruner-plugin-settings #swipe_pruner_plugin_apply_defaults {
+.st-swipe-cleaner-settings #st_swipe_cleaner_apply_defaults {
     white-space: nowrap;
     min-width: 84px;
     padding-left: 10px;
@@ -32,39 +32,39 @@
     flex: 0 0 auto;
 }
 
-.swipe-pruner-buttons {
+.st-swipe-cleaner-buttons {
     margin-top: 8px;
     display: flex;
     flex-direction: column;
     gap: 6px;
 }
 
-.swipe-pruner-buttons-title {
+.st-swipe-cleaner-buttons-title {
     opacity: 0.8;
 }
 
-.swipe-pruner-button-options {
+.st-swipe-cleaner-button-options {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
     align-items: center;
 }
 
-.swipe-pruner-option {
+.st-swipe-cleaner-option {
     display: inline-flex;
     align-items: center;
     gap: 6px;
 }
 
-.swipe-pruner-option[data-info] {
+.st-swipe-cleaner-option[data-info] {
     cursor: help;
 }
 
-.swipe-pruner-option[data-info] label {
+.st-swipe-cleaner-option[data-info] label {
     cursor: help;
 }
 
-.swipe-pruner-tooltip {
+.st-swipe-cleaner-tooltip {
     position: fixed;
     z-index: 10000;
     max-width: min(360px, 80vw);
