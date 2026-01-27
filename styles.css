@@ -1,0 +1,82 @@
+.swipe-pruner-plugin-fallback {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin: 4px 0;
+}
+
+.swipe-pruner-plugin-fallback .qr--button {
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 10px;
+    padding: 3px 5px;
+    margin: 3px 0;
+    cursor: pointer;
+    transition: var(--animation-duration-2x);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    position: relative;
+}
+
+.swipe-pruner-plugin-fallback .qr--button:hover {
+    background-color: #4d4d4d;
+}
+
+.swipe-pruner-plugin-settings #swipe_pruner_plugin_apply_defaults {
+    white-space: nowrap;
+    min-width: 84px;
+    padding-left: 10px;
+    padding-right: 10px;
+    flex: 0 0 auto;
+}
+
+.swipe-pruner-buttons {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.swipe-pruner-buttons-title {
+    opacity: 0.8;
+}
+
+.swipe-pruner-button-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.swipe-pruner-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.swipe-pruner-option[data-info] {
+    cursor: help;
+}
+
+.swipe-pruner-option[data-info] label {
+    cursor: help;
+}
+
+.swipe-pruner-tooltip {
+    position: fixed;
+    z-index: 10000;
+    max-width: min(360px, 80vw);
+    padding: 8px 10px;
+    background: rgba(20, 20, 20, 0.95);
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    pointer-events: none;
+}

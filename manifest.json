@@ -1,0 +1,11 @@
+{
+    "display_name": "ST-SwipeCleaner",
+    "loading_order": 110,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "styles.css",
+    "author": "local",
+    "version": "0.1.0",
+    "description": "清理当前楼层 swipes / 清理旧楼层无用 swipes（可选自动保存）"
+}
