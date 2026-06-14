@@ -19,31 +19,34 @@ const DEFAULT_SETTINGS = Object.freeze({
     }),
 });
 
-const BUTTON_KEEP_CURRENT = '清理当前(保留当前)';
-const BUTTON_DELETE_SPECIFIED = '清理当前(删除指定)';
-const BUTTON_PRUNE_OLD = '清理旧swipe';
+const BUTTON_KEEP_CURRENT = '清理本楼（保留当前swipe）';
+const BUTTON_DELETE_SPECIFIED = '清理本楼（删除特定swipe）';
+const BUTTON_PRUNE_OLD = '清理历史楼层';
 const QR_ASSISTANT_GROUP_NAME = 'ST-SwipeCleaner';
 
 const BUTTON_INFO = Object.freeze({
-    keep: '清理当前(保留当前)：清理当前楼层其它 swipes',
-    delete: '清理当前(删除指定)：清理当前楼层指定 swipes（支持输入 x-y 或 x,y,z）',
-    prune: '清理过去楼层的swipe：当总楼层为 0-99 时，若保留最近楼层数设置为 20 层，则删除0-79层所有无效swipes',
+    keep: '清理本楼（保留当前swipe）：清理本楼其它 swipes',
+    delete: '清理本楼（删除特定swipe）：清理本楼指定 swipes（支持输入 x-y 或 x,y,z）',
+    prune: '清理历史楼层：当总楼层为 0-99 时，若保留最近楼层数设置为 20 层，则删除0-79层所有无效swipes',
 });
 
 const QR_ASSISTANT_BUTTONS = Object.freeze([
     {
         dom_id: 'st_swipe_cleaner_btn_keep',
         settingKey: 'keepCurrent',
+        group_name: QR_ASSISTANT_GROUP_NAME,
         button_name: BUTTON_KEEP_CURRENT,
     },
     {
         dom_id: 'st_swipe_cleaner_btn_delete',
         settingKey: 'deleteSpecified',
+        group_name: QR_ASSISTANT_GROUP_NAME,
         button_name: BUTTON_DELETE_SPECIFIED,
     },
     {
         dom_id: 'st_swipe_cleaner_btn_prune',
         settingKey: 'pruneOld',
+        group_name: QR_ASSISTANT_GROUP_NAME,
         button_name: BUTTON_PRUNE_OLD,
     },
 ]);
@@ -221,7 +224,7 @@ function keepOnlyCurrentSwipe(message, { quiet = false } = {}) {
     message.extra = structuredClone(keptInfo.extra ?? {});
 
     if (!quiet) {
-        toastr.success('已清理当前楼层其它 swipes。');
+        toastr.success('已清理本楼其它 swipes。');
     }
     return { changed: true, removedCount: swipes.length - 1 };
 }
@@ -329,7 +332,7 @@ function syncQrAssistantButtons(visibility) {
     const isCurrent = ownItems.length === enabledButtons.length
         && enabledButtons.every(button => ownItems.some(item =>
             item?.dom_id === button.dom_id
-            && item?.group_name === QR_ASSISTANT_GROUP_NAME
+            && item?.group_name === button.group_name
             && item?.button_name === button.button_name));
 
     if (isCurrent) return;
@@ -343,7 +346,7 @@ function syncQrAssistantButtons(visibility) {
     enabledButtons.forEach(button => {
         api.push({
             dom_id: button.dom_id,
-            group_name: QR_ASSISTANT_GROUP_NAME,
+            group_name: button.group_name,
             button_name: button.button_name,
         });
     });
@@ -490,15 +493,15 @@ function ensureButtons(context, settings) {
         observeQrAssistantButton($btn[0]);
     };
 
-    ensureButton('st_swipe_cleaner_btn_keep', BUTTON_KEEP_CURRENT, '清理当前楼层其它 swipes（保留当前）', visibility.keepCurrent, async () => {
+    ensureButton('st_swipe_cleaner_btn_keep', BUTTON_KEEP_CURRENT, '清理本楼其它 swipes（保留当前swipe）', visibility.keepCurrent, async () => {
         await runKeepCurrent(context, settings);
     });
 
-    ensureButton('st_swipe_cleaner_btn_delete', BUTTON_DELETE_SPECIFIED, '删除当前楼层指定 swipes', visibility.deleteSpecified, async () => {
+    ensureButton('st_swipe_cleaner_btn_delete', BUTTON_DELETE_SPECIFIED, '清理本楼指定 swipes（删除特定swipe）', visibility.deleteSpecified, async () => {
         await runDeleteSpecified(context, settings);
     });
 
-    ensureButton('st_swipe_cleaner_btn_prune', BUTTON_PRUNE_OLD, '清理旧楼层无用 swipes（保留最近 N 层完整历史）', visibility.pruneOld, async () => {
+    ensureButton('st_swipe_cleaner_btn_prune', BUTTON_PRUNE_OLD, '清理历史楼层无用 swipes（保留最近 N 层完整历史）', visibility.pruneOld, async () => {
         await runPruneOld(context, settings);
     });
 
@@ -518,7 +521,7 @@ async function runKeepCurrent(context, settings) {
         const message = chat[messageId];
         const result = keepOnlyCurrentSwipe(message, { quiet: true });
         if (!result.changed) {
-            toastr.info('当前楼层没有其它 swipe，无需清理。');
+            toastr.info('本楼没有其它 swipe，无需清理。');
             return { changed: false };
         }
 
@@ -559,7 +562,7 @@ async function runDeleteSpecified(context, settings, { spec } = {}) {
         const message = chat[messageId];
         const { swipes, swipeId } = normalizeSwipeState(message);
         if (swipes.length <= 1) {
-            toastr.info('当前楼层没有可删除的 swipe。');
+            toastr.info('本楼没有可删除的 swipe。');
             return { changed: false };
         }
 
@@ -612,7 +615,7 @@ async function runPruneOld(context, settings, { keepFloors } = {}) {
         const keep = keepFloors !== undefined ? clampInt(keepFloors, 0, chat.length) : settings.keepFloors;
         const result = pruneOldSwipes(chat, keep, settings.includeHidden);
         if (!result.changed) {
-            toastr.info(`没有需要清理的旧 swipe（保留最近 ${keep} 层）。`);
+            toastr.info(`没有需要清理的历史楼层 swipe（保留最近 ${keep} 层）。`);
             return { changed: false };
         }
 
@@ -645,7 +648,7 @@ function registerSlashCommands(context, settings) {
         name: 'swipecleaner',
         helpString: '清理 swipe：/swipecleaner | /swipecleaner 1-3 | /swipecleaner 1,3 | /swipecleaner keep=20',
         namedArgumentList: [
-            new SlashCommandNamedArgument('keep', '保留最近楼层数（清理旧楼层 swipes）', ARGUMENT_TYPE.NUMBER, false, false),
+            new SlashCommandNamedArgument('keep', '保留最近楼层数（清理历史楼层 swipes）', ARGUMENT_TYPE.NUMBER, false, false),
         ],
         unnamedArgumentList: [
             new SlashCommandArgument('swipe 序号（例如 1-3 或 1,3,5）', ARGUMENT_TYPE.STRING, false, false),
