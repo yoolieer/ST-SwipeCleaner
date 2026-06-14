@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS = Object.freeze({
 const BUTTON_KEEP_CURRENT = '清理当前(保留当前)';
 const BUTTON_DELETE_SPECIFIED = '清理当前(删除指定)';
 const BUTTON_PRUNE_OLD = '清理旧swipe';
+const QR_ASSISTANT_GROUP_NAME = 'ST-SwipeCleaner';
 
 const BUTTON_INFO = Object.freeze({
     keep: '清理当前(保留当前)：清理当前楼层其它 swipes',
@@ -29,7 +30,28 @@ const BUTTON_INFO = Object.freeze({
     prune: '清理过去楼层的swipe：当总楼层为 0-99 时，若保留最近楼层数设置为 20 层，则删除0-79层所有无效swipes',
 });
 
+const QR_ASSISTANT_BUTTONS = Object.freeze([
+    {
+        dom_id: 'st_swipe_cleaner_btn_keep',
+        settingKey: 'keepCurrent',
+        button_name: BUTTON_KEEP_CURRENT,
+    },
+    {
+        dom_id: 'st_swipe_cleaner_btn_delete',
+        settingKey: 'deleteSpecified',
+        button_name: BUTTON_DELETE_SPECIFIED,
+    },
+    {
+        dom_id: 'st_swipe_cleaner_btn_prune',
+        settingKey: 'pruneOld',
+        button_name: BUTTON_PRUNE_OLD,
+    },
+]);
+
 let isRunning = false;
+let qrAssistantWhitelistObserver = null;
+let qrAssistantWhitelistSyncQueued = false;
+const qrAssistantObservedButtons = new WeakSet();
 
 function clampInt(value, min, max) {
     const n = Number(value);
@@ -295,6 +317,76 @@ function safeSwipeRefresh(context) {
     return false;
 }
 
+function syncQrAssistantButtons(visibility) {
+    if (!Array.isArray(window.qrAssistantExtensionApi)) {
+        window.qrAssistantExtensionApi = [];
+    }
+
+    const api = window.qrAssistantExtensionApi;
+    const ownIds = new Set(QR_ASSISTANT_BUTTONS.map(button => button.dom_id));
+    const enabledButtons = QR_ASSISTANT_BUTTONS.filter(button => visibility?.[button.settingKey]);
+    const ownItems = api.filter(item => ownIds.has(item?.dom_id));
+    const isCurrent = ownItems.length === enabledButtons.length
+        && enabledButtons.every(button => ownItems.some(item =>
+            item?.dom_id === button.dom_id
+            && item?.group_name === QR_ASSISTANT_GROUP_NAME
+            && item?.button_name === button.button_name));
+
+    if (isCurrent) return;
+
+    for (let i = api.length - 1; i >= 0; i--) {
+        if (ownIds.has(api[i]?.dom_id)) {
+            api.splice(i, 1);
+        }
+    }
+
+    enabledButtons.forEach(button => {
+        api.push({
+            dom_id: button.dom_id,
+            group_name: QR_ASSISTANT_GROUP_NAME,
+            button_name: button.button_name,
+        });
+    });
+}
+
+function syncQrAssistantWhitelistContainer() {
+    const $bar = $('#st_swipe_cleaner_bar');
+    if (!$bar.length) return;
+
+    const hasWhitelistedButton = QR_ASSISTANT_BUTTONS.some(button =>
+        $(`#${button.dom_id}`).hasClass('qrq-whitelisted-original'));
+
+    $bar.toggleClass('qrq-whitelisted-original', hasWhitelistedButton);
+    if (hasWhitelistedButton) {
+        $bar.removeClass('qrq-hidden-by-plugin');
+    }
+}
+
+function queueQrAssistantWhitelistContainerSync() {
+    if (qrAssistantWhitelistSyncQueued) return;
+    qrAssistantWhitelistSyncQueued = true;
+    const sync = () => {
+        qrAssistantWhitelistSyncQueued = false;
+        syncQrAssistantWhitelistContainer();
+    };
+    if (typeof queueMicrotask === 'function') {
+        queueMicrotask(sync);
+    } else {
+        Promise.resolve().then(sync);
+    }
+}
+
+function observeQrAssistantButton(button) {
+    if (!button || qrAssistantObservedButtons.has(button)) return;
+
+    if (!qrAssistantWhitelistObserver) {
+        qrAssistantWhitelistObserver = new MutationObserver(queueQrAssistantWhitelistContainerSync);
+    }
+
+    qrAssistantWhitelistObserver.observe(button, { attributes: true, attributeFilter: ['class'] });
+    qrAssistantObservedButtons.add(button);
+}
+
 async function emitMessageRendered(context, messageId, message) {
     try {
         const eventSource = context?.eventSource;
@@ -313,7 +405,11 @@ async function emitMessageRendered(context, messageId, message) {
 }
 
 function ensureButtons(context, settings) {
-    if (!settings.buttonsEnabled) return;
+    if (!settings.buttonsEnabled) {
+        syncQrAssistantButtons({});
+        $('#st_swipe_cleaner_bar').remove();
+        return;
+    }
 
     const $sendForm = $('#send_form');
     if (!$sendForm.length) return;
@@ -323,6 +419,7 @@ function ensureButtons(context, settings) {
         ...(settings.buttonVisibility ?? {}),
     };
     const hasAnyEnabled = Object.values(visibility).some(Boolean);
+    syncQrAssistantButtons(hasAnyEnabled ? visibility : {});
 
     if (!hasAnyEnabled) {
         $('#st_swipe_cleaner_bar').remove();
@@ -380,13 +477,17 @@ function ensureButtons(context, settings) {
             if ($existing.length) $existing.remove();
             return;
         }
-        if ($existing.length) return;
+        if ($existing.length) {
+            observeQrAssistantButton($existing[0]);
+            return;
+        }
         const $btn = $(`<div id="${id}" class="qr--button menu_button interactable"></div>`)
             .text(label)
             .attr('title', title)
             .on('click', onClick)
             .on('pointerdown', (e) => e.preventDefault());
         $bar.append($btn);
+        observeQrAssistantButton($btn[0]);
     };
 
     ensureButton('st_swipe_cleaner_btn_keep', BUTTON_KEEP_CURRENT, '清理当前楼层其它 swipes（保留当前）', visibility.keepCurrent, async () => {
@@ -400,6 +501,8 @@ function ensureButtons(context, settings) {
     ensureButton('st_swipe_cleaner_btn_prune', BUTTON_PRUNE_OLD, '清理旧楼层无用 swipes（保留最近 N 层完整历史）', visibility.pruneOld, async () => {
         await runPruneOld(context, settings);
     });
+
+    queueQrAssistantWhitelistContainerSync();
 }
 
 async function runKeepCurrent(context, settings) {
