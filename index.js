@@ -7,27 +7,34 @@ const extensionName = 'ST-SwipeCleaner';
 const extensionWebPath = `/scripts/extensions/third-party/${extensionName}`;
 const settingsKey = 'st_swipe_cleaner';
 
+const DEFAULT_BUTTON_LABELS = Object.freeze({
+    keepCurrent: '清理本楼（保留当前swipe）',
+    deleteSpecified: '清理本楼（删除特定swipe）',
+    pruneOld: '清理全部楼层',
+});
+
+const DEFAULT_BUTTON_VISIBILITY = Object.freeze({
+    keepCurrent: true,
+    deleteSpecified: true,
+    pruneOld: true,
+});
+
 const DEFAULT_SETTINGS = Object.freeze({
     keepFloors: 20,
     autoSave: true,
     includeHidden: true,
     buttonsEnabled: true,
-    buttonVisibility: Object.freeze({
-        keepCurrent: true,
-        deleteSpecified: true,
-        pruneOld: true,
-    }),
 });
 
-const BUTTON_KEEP_CURRENT = '清理本楼（保留当前swipe）';
-const BUTTON_DELETE_SPECIFIED = '清理本楼（删除特定swipe）';
-const BUTTON_PRUNE_OLD = '清理历史楼层';
+const BUTTON_KEEP_CURRENT = DEFAULT_BUTTON_LABELS.keepCurrent;
+const BUTTON_DELETE_SPECIFIED = DEFAULT_BUTTON_LABELS.deleteSpecified;
+const BUTTON_PRUNE_OLD = DEFAULT_BUTTON_LABELS.pruneOld;
 const QR_ASSISTANT_GROUP_NAME = 'ST-SwipeCleaner';
 
 const BUTTON_INFO = Object.freeze({
     keep: '清理本楼（保留当前swipe）：清理本楼其它 swipes',
     delete: '清理本楼（删除特定swipe）：清理本楼指定 swipes（支持输入 x-y 或 x,y,z）',
-    prune: '清理历史楼层：当总楼层为 0-99 时，若保留最近楼层数设置为 20 层，则删除0-79层所有无效swipes',
+    prune: '清理全部楼层：当总楼层为 0-99 时，若保留最近楼层数设置为 20 层，则删除0-79层所有无效swipes',
 });
 
 const QR_ASSISTANT_BUTTONS = Object.freeze([
@@ -35,19 +42,16 @@ const QR_ASSISTANT_BUTTONS = Object.freeze([
         dom_id: 'st_swipe_cleaner_btn_keep',
         settingKey: 'keepCurrent',
         group_name: QR_ASSISTANT_GROUP_NAME,
-        button_name: BUTTON_KEEP_CURRENT,
     },
     {
         dom_id: 'st_swipe_cleaner_btn_delete',
         settingKey: 'deleteSpecified',
         group_name: QR_ASSISTANT_GROUP_NAME,
-        button_name: BUTTON_DELETE_SPECIFIED,
     },
     {
         dom_id: 'st_swipe_cleaner_btn_prune',
         settingKey: 'pruneOld',
         group_name: QR_ASSISTANT_GROUP_NAME,
-        button_name: BUTTON_PRUNE_OLD,
     },
 ]);
 
@@ -55,6 +59,20 @@ let isRunning = false;
 let qrAssistantWhitelistObserver = null;
 let qrAssistantWhitelistSyncQueued = false;
 const qrAssistantObservedButtons = new WeakSet();
+
+function normalizeButtonLabel(value, fallback) {
+    const label = String(value ?? '').trim();
+    return label || fallback;
+}
+
+function getButtonLabels(settings) {
+    const customLabels = settings?.buttonLabels ?? {};
+    return {
+        keepCurrent: normalizeButtonLabel(customLabels.keepCurrent, DEFAULT_BUTTON_LABELS.keepCurrent),
+        deleteSpecified: normalizeButtonLabel(customLabels.deleteSpecified, DEFAULT_BUTTON_LABELS.deleteSpecified),
+        pruneOld: normalizeButtonLabel(customLabels.pruneOld, DEFAULT_BUTTON_LABELS.pruneOld),
+    };
+}
 
 function clampInt(value, min, max) {
     const n = Number(value);
@@ -320,7 +338,7 @@ function safeSwipeRefresh(context) {
     return false;
 }
 
-function syncQrAssistantButtons(visibility) {
+function syncQrAssistantButtons(visibility, labels = DEFAULT_BUTTON_LABELS) {
     if (!Array.isArray(window.qrAssistantExtensionApi)) {
         window.qrAssistantExtensionApi = [];
     }
@@ -333,7 +351,7 @@ function syncQrAssistantButtons(visibility) {
         && enabledButtons.every(button => ownItems.some(item =>
             item?.dom_id === button.dom_id
             && item?.group_name === button.group_name
-            && item?.button_name === button.button_name));
+            && item?.button_name === labels[button.settingKey]));
 
     if (isCurrent) return;
 
@@ -347,7 +365,7 @@ function syncQrAssistantButtons(visibility) {
         api.push({
             dom_id: button.dom_id,
             group_name: button.group_name,
-            button_name: button.button_name,
+            button_name: labels[button.settingKey],
         });
     });
 }
@@ -418,11 +436,12 @@ function ensureButtons(context, settings) {
     if (!$sendForm.length) return;
 
     const visibility = {
-        ...DEFAULT_SETTINGS.buttonVisibility,
+        ...DEFAULT_BUTTON_VISIBILITY,
         ...(settings.buttonVisibility ?? {}),
     };
+    const labels = getButtonLabels(settings);
     const hasAnyEnabled = Object.values(visibility).some(Boolean);
-    syncQrAssistantButtons(hasAnyEnabled ? visibility : {});
+    syncQrAssistantButtons(hasAnyEnabled ? visibility : {}, labels);
 
     if (!hasAnyEnabled) {
         $('#st_swipe_cleaner_bar').remove();
@@ -481,6 +500,12 @@ function ensureButtons(context, settings) {
             return;
         }
         if ($existing.length) {
+            if ($existing.text() !== label) {
+                $existing.text(label);
+            }
+            if ($existing.attr('title') !== title) {
+                $existing.attr('title', title);
+            }
             observeQrAssistantButton($existing[0]);
             return;
         }
@@ -493,15 +518,15 @@ function ensureButtons(context, settings) {
         observeQrAssistantButton($btn[0]);
     };
 
-    ensureButton('st_swipe_cleaner_btn_keep', BUTTON_KEEP_CURRENT, '清理本楼其它 swipes（保留当前swipe）', visibility.keepCurrent, async () => {
+    ensureButton('st_swipe_cleaner_btn_keep', labels.keepCurrent, '清理本楼其它 swipes（保留当前swipe）', visibility.keepCurrent, async () => {
         await runKeepCurrent(context, settings);
     });
 
-    ensureButton('st_swipe_cleaner_btn_delete', BUTTON_DELETE_SPECIFIED, '清理本楼指定 swipes（删除特定swipe）', visibility.deleteSpecified, async () => {
+    ensureButton('st_swipe_cleaner_btn_delete', labels.deleteSpecified, '清理本楼指定 swipes（删除特定swipe）', visibility.deleteSpecified, async () => {
         await runDeleteSpecified(context, settings);
     });
 
-    ensureButton('st_swipe_cleaner_btn_prune', BUTTON_PRUNE_OLD, '清理历史楼层无用 swipes（保留最近 N 层完整历史）', visibility.pruneOld, async () => {
+    ensureButton('st_swipe_cleaner_btn_prune', labels.pruneOld, '清理全部楼层无用 swipes（保留最近 N 层完整历史）', visibility.pruneOld, async () => {
         await runPruneOld(context, settings);
     });
 
@@ -648,7 +673,7 @@ function registerSlashCommands(context, settings) {
         name: 'swipecleaner',
         helpString: '清理 swipe：/swipecleaner | /swipecleaner 1-3 | /swipecleaner 1,3 | /swipecleaner keep=20',
         namedArgumentList: [
-            new SlashCommandNamedArgument('keep', '保留最近楼层数（清理历史楼层 swipes）', ARGUMENT_TYPE.NUMBER, false, false),
+            new SlashCommandNamedArgument('keep', '保留最近楼层数（清理全部楼层 swipes）', ARGUMENT_TYPE.NUMBER, false, false),
         ],
         unnamedArgumentList: [
             new SlashCommandArgument('swipe 序号（例如 1-3 或 1,3,5）', ARGUMENT_TYPE.STRING, false, false),
@@ -683,7 +708,8 @@ function ensureSettings(context) {
     if (!extSettings[settingsKey]) {
         extSettings[settingsKey] = {
             ...DEFAULT_SETTINGS,
-            buttonVisibility: { ...DEFAULT_SETTINGS.buttonVisibility },
+            buttonVisibility: { ...DEFAULT_BUTTON_VISIBILITY },
+            buttonLabels: { ...DEFAULT_BUTTON_LABELS },
         };
         context.saveSettingsDebounced();
     }
@@ -696,12 +722,23 @@ function ensureSettings(context) {
         }
     }
     if (!current.buttonVisibility || typeof current.buttonVisibility !== 'object') {
-        current.buttonVisibility = { ...DEFAULT_SETTINGS.buttonVisibility };
+        current.buttonVisibility = { ...DEFAULT_BUTTON_VISIBILITY };
         changed = true;
     } else {
-        for (const [key, value] of Object.entries(DEFAULT_SETTINGS.buttonVisibility)) {
+        for (const [key, value] of Object.entries(DEFAULT_BUTTON_VISIBILITY)) {
             if (current.buttonVisibility[key] === undefined) {
                 current.buttonVisibility[key] = value;
+                changed = true;
+            }
+        }
+    }
+    if (!current.buttonLabels || typeof current.buttonLabels !== 'object' || Object.isFrozen(current.buttonLabels)) {
+        current.buttonLabels = { ...DEFAULT_BUTTON_LABELS };
+        changed = true;
+    } else {
+        for (const [key, value] of Object.entries(DEFAULT_BUTTON_LABELS)) {
+            if (current.buttonLabels[key] === undefined) {
+                current.buttonLabels[key] = value;
                 changed = true;
             }
         }
@@ -719,6 +756,9 @@ function wireSettingsUi(context, settings) {
     const $btnKeep = $('#st_swipe_cleaner_btn_keep_enabled');
     const $btnDelete = $('#st_swipe_cleaner_btn_delete_enabled');
     const $btnPrune = $('#st_swipe_cleaner_btn_prune_enabled');
+    const $labelKeep = $('#st_swipe_cleaner_label_keep');
+    const $labelDelete = $('#st_swipe_cleaner_label_delete');
+    const $labelPrune = $('#st_swipe_cleaner_label_prune');
     const $defaults = $('#st_swipe_cleaner_apply_defaults');
 
     $keepFloors.val(String(settings.keepFloors));
@@ -727,6 +767,13 @@ function wireSettingsUi(context, settings) {
     $btnKeep.prop('checked', Boolean(settings.buttonVisibility?.keepCurrent ?? true));
     $btnDelete.prop('checked', Boolean(settings.buttonVisibility?.deleteSpecified ?? true));
     $btnPrune.prop('checked', Boolean(settings.buttonVisibility?.pruneOld ?? true));
+    const refreshButtonLabelInputs = () => {
+        const labels = getButtonLabels(settings);
+        $labelKeep.val(labels.keepCurrent);
+        $labelDelete.val(labels.deleteSpecified);
+        $labelPrune.val(labels.pruneOld);
+    };
+    refreshButtonLabelInputs();
 
     $keepFloors.on('change', () => {
         settings.keepFloors = Math.max(0, Math.trunc(Number($keepFloors.val())));
@@ -752,6 +799,20 @@ function wireSettingsUi(context, settings) {
     $btnKeep.on('change', syncButtonVisibility);
     $btnDelete.on('change', syncButtonVisibility);
     $btnPrune.on('change', syncButtonVisibility);
+
+    const syncButtonLabels = () => {
+        settings.buttonLabels = {
+            keepCurrent: normalizeButtonLabel($labelKeep.val(), DEFAULT_BUTTON_LABELS.keepCurrent),
+            deleteSpecified: normalizeButtonLabel($labelDelete.val(), DEFAULT_BUTTON_LABELS.deleteSpecified),
+            pruneOld: normalizeButtonLabel($labelPrune.val(), DEFAULT_BUTTON_LABELS.pruneOld),
+        };
+        refreshButtonLabelInputs();
+        context.saveSettingsDebounced();
+        ensureButtons(context, settings);
+    };
+    $labelKeep.on('change', syncButtonLabels);
+    $labelDelete.on('change', syncButtonLabels);
+    $labelPrune.on('change', syncButtonLabels);
 
     const ensureTooltip = () => {
         let $tooltip = $('#st_swipe_cleaner_tooltip');
@@ -785,11 +846,16 @@ function wireSettingsUi(context, settings) {
         $item
             .off('.swipePrunerTooltip')
             .on('mouseenter.swipePrunerTooltip', (evt) => {
+                if ($(evt.target).is('.st-swipe-cleaner-label-input')) return;
                 const $tooltip = ensureTooltip();
                 $tooltip.text(text).show();
                 positionTooltip($tooltip, evt);
             })
             .on('mousemove.swipePrunerTooltip', (evt) => {
+                if ($(evt.target).is('.st-swipe-cleaner-label-input')) {
+                    $('#st_swipe_cleaner_tooltip').hide();
+                    return;
+                }
                 const $tooltip = $('#st_swipe_cleaner_tooltip');
                 if ($tooltip.length && $tooltip.is(':visible')) {
                     positionTooltip($tooltip, evt);
@@ -802,7 +868,8 @@ function wireSettingsUi(context, settings) {
     $defaults.on('click', () => {
         Object.assign(settings, {
             ...DEFAULT_SETTINGS,
-            buttonVisibility: { ...DEFAULT_SETTINGS.buttonVisibility },
+            buttonVisibility: { ...DEFAULT_BUTTON_VISIBILITY },
+            buttonLabels: { ...DEFAULT_BUTTON_LABELS },
         });
         $keepFloors.val(String(settings.keepFloors));
         $autoSave.prop('checked', Boolean(settings.autoSave));
@@ -810,6 +877,7 @@ function wireSettingsUi(context, settings) {
         $btnKeep.prop('checked', Boolean(settings.buttonVisibility.keepCurrent));
         $btnDelete.prop('checked', Boolean(settings.buttonVisibility.deleteSpecified));
         $btnPrune.prop('checked', Boolean(settings.buttonVisibility.pruneOld));
+        refreshButtonLabelInputs();
         context.saveSettingsDebounced();
         ensureButtons(context, settings);
         toastr.success('已恢复默认设置');
@@ -836,6 +904,10 @@ jQuery(async () => {
     ensureButtons(context, settings);
 
     // QR bar might appear after other extensions initialize; re-home our buttons when it does.
-    const observer = new MutationObserver(() => ensureButtons(context, settings));
+    let ensureButtonsTimer = null;
+    const observer = new MutationObserver(() => {
+        clearTimeout(ensureButtonsTimer);
+        ensureButtonsTimer = setTimeout(() => ensureButtons(context, settings), 50);
+    });
     observer.observe(document.body, { childList: true, subtree: true });
 });

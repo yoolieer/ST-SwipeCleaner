@@ -56,6 +56,12 @@
     gap: 6px;
 }
 
+.st-swipe-cleaner-label-input {
+    width: min(240px, 48vw);
+    min-width: 120px;
+    cursor: text;
+}
+
 .st-swipe-cleaner-option[data-info] {
     cursor: help;
 }
