@@ -10,7 +10,7 @@ const settingsKey = 'st_swipe_cleaner';
 const DEFAULT_BUTTON_LABELS = Object.freeze({
     keepCurrent: '清理本楼（保留当前swipe）',
     deleteSpecified: '清理本楼（删除特定swipe）',
-    pruneOld: '清理全部楼层',
+    pruneOld: '清理历史楼层',
 });
 
 const DEFAULT_BUTTON_VISIBILITY = Object.freeze({
@@ -34,7 +34,7 @@ const QR_ASSISTANT_GROUP_NAME = 'ST-SwipeCleaner';
 const BUTTON_INFO = Object.freeze({
     keep: '清理本楼（保留当前swipe）：清理本楼其它 swipes',
     delete: '清理本楼（删除特定swipe）：清理本楼指定 swipes（支持输入 x-y 或 x,y,z）',
-    prune: '清理全部楼层：当总楼层为 0-99 时，若保留最近楼层数设置为 20 层，则删除0-79层所有无效swipes',
+    prune: '清理历史楼层：当总楼层为 0-99 时，若保留最近楼层数设置为 20 层，则删除0-79层所有无效swipes',
 });
 
 const QR_ASSISTANT_BUTTONS = Object.freeze([
@@ -526,7 +526,7 @@ function ensureButtons(context, settings) {
         await runDeleteSpecified(context, settings);
     });
 
-    ensureButton('st_swipe_cleaner_btn_prune', labels.pruneOld, '清理全部楼层无用 swipes（保留最近 N 层完整历史）', visibility.pruneOld, async () => {
+    ensureButton('st_swipe_cleaner_btn_prune', labels.pruneOld, '清理历史楼层无用 swipes（保留最近 N 层完整历史）', visibility.pruneOld, async () => {
         await runPruneOld(context, settings);
     });
 
@@ -673,7 +673,7 @@ function registerSlashCommands(context, settings) {
         name: 'swipecleaner',
         helpString: '清理 swipe：/swipecleaner | /swipecleaner 1-3 | /swipecleaner 1,3 | /swipecleaner keep=20',
         namedArgumentList: [
-            new SlashCommandNamedArgument('keep', '保留最近楼层数（清理全部楼层 swipes）', ARGUMENT_TYPE.NUMBER, false, false),
+            new SlashCommandNamedArgument('keep', '保留最近楼层数（清理历史楼层 swipes）', ARGUMENT_TYPE.NUMBER, false, false),
         ],
         unnamedArgumentList: [
             new SlashCommandArgument('swipe 序号（例如 1-3 或 1,3,5）', ARGUMENT_TYPE.STRING, false, false),
@@ -837,7 +837,7 @@ function wireSettingsUi(context, settings) {
         $tooltip.css({ left: `${x}px`, top: `${y}px` });
     };
 
-    $('.st-swipe-cleaner-option[data-info]').each(function () {
+    $('.st-swipe-cleaner-help[data-info]').each(function () {
         const $item = $(this);
         const key = $item.data('info');
         const text = BUTTON_INFO?.[key];
@@ -846,16 +846,11 @@ function wireSettingsUi(context, settings) {
         $item
             .off('.swipePrunerTooltip')
             .on('mouseenter.swipePrunerTooltip', (evt) => {
-                if ($(evt.target).is('.st-swipe-cleaner-label-input')) return;
                 const $tooltip = ensureTooltip();
                 $tooltip.text(text).show();
                 positionTooltip($tooltip, evt);
             })
             .on('mousemove.swipePrunerTooltip', (evt) => {
-                if ($(evt.target).is('.st-swipe-cleaner-label-input')) {
-                    $('#st_swipe_cleaner_tooltip').hide();
-                    return;
-                }
                 const $tooltip = $('#st_swipe_cleaner_tooltip');
                 if ($tooltip.length && $tooltip.is(':visible')) {
                     positionTooltip($tooltip, evt);
