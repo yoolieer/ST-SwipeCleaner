@@ -144,6 +144,72 @@ function normalizeSwipeState(message) {
     return { swipes, swipeInfo, swipeData, swipeId };
 }
 
+function syncCurrentMesToSwipe(message) {
+    if (!message || typeof message !== 'object') {
+        return { changed: false };
+    }
+
+    const hadSwipesArray = Array.isArray(message.swipes);
+    const hadSwipeInfoArray = Array.isArray(message.swipe_info);
+    const hadVariablesArray = Array.isArray(message.variables);
+    const swipesRaw = hadSwipesArray ? message.swipes : [];
+    const swipes = (swipesRaw.length > 0 ? swipesRaw.slice() : [message.mes ?? '']).map(s => s ?? '');
+    if (swipes.length === 0) {
+        return { changed: false };
+    }
+
+    const swipeId = typeof message.swipe_id === 'number'
+        ? clampInt(message.swipe_id, 0, swipes.length - 1)
+        : 0;
+    const swipeInfoRaw = toArrayFromNumericObject(message.swipe_info, swipes.length, () => undefined);
+    const swipeInfo = swipeInfoRaw.map((entry, i) => {
+        const fallbackExtra = i === swipeId ? (message.extra ?? {}) : {};
+        return normalizeSwipeInfoEntry(entry, fallbackExtra, message);
+    });
+    const swipeData = toArrayFromNumericObject(message.variables, swipes.length, () => ({}));
+
+    let changed = false;
+    const currentMes = message.mes ?? '';
+    if (swipes[swipeId] !== currentMes) {
+        swipes[swipeId] = currentMes;
+        changed = true;
+    }
+
+    const currentInfo = swipeInfo[swipeId] ?? {};
+    const nextInfo = {
+        ...currentInfo,
+        send_date: message.send_date,
+        gen_started: message.gen_started,
+        gen_finished: message.gen_finished,
+        extra: structuredClone(message.extra ?? {}),
+    };
+    if (
+        currentInfo.send_date !== nextInfo.send_date ||
+        currentInfo.gen_started !== nextInfo.gen_started ||
+        currentInfo.gen_finished !== nextInfo.gen_finished ||
+        JSON.stringify(currentInfo.extra ?? {}) !== JSON.stringify(nextInfo.extra ?? {})
+    ) {
+        swipeInfo[swipeId] = nextInfo;
+        changed = true;
+    }
+
+    if (message.swipe_id !== swipeId) {
+        message.swipe_id = swipeId;
+        changed = true;
+    }
+    if (!hadSwipesArray || changed) {
+        message.swipes = swipes;
+    }
+    if (!hadSwipeInfoArray || changed) {
+        message.swipe_info = swipeInfo;
+    }
+    if (!hadVariablesArray || changed) {
+        message.variables = swipeData;
+    }
+
+    return { changed, swipeId };
+}
+
 function parseSwipeSpec(input, swipeCount) {
     const cleaned = String(input ?? '')
         .trim()
@@ -222,6 +288,7 @@ function updateTimestampUi(messageId, message) {
 }
 
 function keepOnlyCurrentSwipe(message, { quiet = false } = {}) {
+    syncCurrentMesToSwipe(message);
     const { swipes, swipeInfo, swipeData, swipeId } = normalizeSwipeState(message);
     if (swipes.length <= 1) {
         return { changed: false };
@@ -248,6 +315,7 @@ function keepOnlyCurrentSwipe(message, { quiet = false } = {}) {
 }
 
 function deleteSpecifiedSwipes(message, deleteSet) {
+    syncCurrentMesToSwipe(message);
     const { swipes, swipeInfo, swipeData, swipeId } = normalizeSwipeState(message);
     if (swipes.length <= 1) {
         return { changed: false };
